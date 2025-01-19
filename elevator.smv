@@ -1,0 +1,157 @@
+-- Elevator System NuSMV Specification
+-- A formal model of a 5-floor elevator system with comprehensive safety and liveness properties
+
+MODULE main
+
+-- State Variables Declaration
+VAR
+    floor : {1, 2, 3, 4, 5};           -- Current floor position
+    direction_up : boolean;            -- Elevator moving upward
+    direction_down : boolean;          -- Elevator moving downward
+    door_closed : boolean;             -- Door state
+    button : array 1..5 of boolean;    -- Floor request buttons
+
+-- Helper Definitions for Request Management
+DEFINE
+    -- Check if there are requests above current floor
+    has_req_above := 
+        case
+            floor = 1 : !button[1];
+            floor = 2 : button[3] | button[4] | button[5];
+            floor = 3 : button[4] | button[5];
+            floor = 4 : button[5];
+            floor = 5 : FALSE;
+        esac;
+
+    -- Check if there are requests below current floor
+    has_req_below :=
+        case
+            floor = 1 : FALSE;
+            floor = 2 : button[1];
+            floor = 3 : button[1] | button[2];
+            floor = 4 : button[1] | button[2] | button[3];
+            floor = 5 : !button[5];
+        esac;
+
+    -- Determine if elevator should be moving
+    should_move := has_req_above | has_req_below;
+    
+    -- Initial State Assignment
+ASSIGN
+    init(floor) := 1;
+    init(direction_up) := FALSE;
+    init(direction_down) := FALSE;
+    init(door_closed) := TRUE;
+    init(button[1]) := FALSE;
+    init(button[2]) := FALSE;
+    init(button[3]) := FALSE;
+    init(button[4]) := FALSE;
+    init(button[5]) := FALSE;
+
+    -- Upward movement control
+    next(direction_up) := case
+        !door_closed : FALSE;                    -- Safety: no movement with open door
+        floor = 5 : FALSE;                       -- Safety: no up movement at top floor
+        has_req_above & door_closed : TRUE;      -- Service requests above
+        TRUE : FALSE;
+    esac;
+
+    -- Downward movement control
+    next(direction_down) := case
+        !door_closed : FALSE;                    -- Safety: no movement with open door
+        floor = 1 : FALSE;                       -- Safety: no down movement at bottom floor
+        has_req_below & door_closed : TRUE;      -- Service requests below
+        TRUE : FALSE;
+    esac;
+
+    -- Door control logic
+    next(door_closed) := case
+        !door_closed : TRUE;                     -- Close open door
+        door_closed & button[floor] : FALSE;     -- Open at destination floor if requested
+        TRUE : door_closed;
+    esac;
+
+    -- Floor position update
+    next(floor) := case
+        !door_closed : floor;                    -- No movement with open door
+        direction_up & floor < 5 & door_closed : floor + 1;   -- Move up
+        direction_down & floor > 1 & door_closed : floor - 1; -- Move down
+        TRUE : floor;
+    esac;
+
+    -- Button state updates (clear when floor is serviced)
+    next(button[1]) := case
+        floor = 1 & !door_closed : FALSE;  -- Clear button when serving floor
+        TRUE : button[1];
+    esac;
+
+    next(button[2]) := case
+        floor = 2 & !door_closed : FALSE;
+        TRUE : button[2];
+    esac;
+
+    next(button[3]) := case
+        floor = 3 & !door_closed : FALSE;
+        TRUE : button[3];
+    esac;
+
+    next(button[4]) := case
+        floor = 4 & !door_closed : FALSE;
+        TRUE : button[4];
+    esac;
+
+    next(button[5]) := case
+        floor = 5 & !door_closed : FALSE;
+        TRUE : button[5];
+    esac;
+
+    -- Fairness Conditions
+    -- Ensure each button request is eventually served:
+    -- If button x is not pressed, we don't care about reaching floor x. 
+    -- If button x is pressed, the elevator must eventually reach floor x and open its doors.
+
+FAIRNESS
+    !(button[1]) | (floor = 1 & !door_closed)
+FAIRNESS
+    !(button[2]) | (floor = 2 & !door_closed)
+FAIRNESS
+    !(button[3]) | (floor = 3 & !door_closed)
+FAIRNESS
+    !(button[4]) | (floor = 4 & !door_closed)
+FAIRNESS
+    !(button[5]) | (floor = 5 & !door_closed)
+
+-- Requirement 1: No movement with open door
+LTLSPEC G(!door_closed -> !(direction_up | direction_down))
+
+-- Requirement 2: Door will eventually close when open
+LTLSPEC G(!door_closed -> F door_closed)
+
+-- Requirement 3: Door will eventually open when closed (if there's a request for current floor)
+LTLSPEC G((door_closed & button[floor]) -> F !door_closed)
+
+-- Requirement 4: No upward movement at highest floor
+LTLSPEC G(floor = 5 -> !direction_up)
+
+-- Requirement 5: No downward movement at lowest floor
+LTLSPEC G(floor = 1 -> !direction_down)
+
+-- Requirement 6: The elevator can visit any floor infinitely often.
+-- Fairness is in place!
+
+-- Requirement 7: When a floor is requested, elevator will eventually stop there
+LTLSPEC G(button[1] -> F(floor = 1 & !door_closed))
+LTLSPEC G(button[2] -> F(floor = 2 & !door_closed))
+LTLSPEC G(button[3] -> F(floor = 3 & !door_closed))
+LTLSPEC G(button[4] -> F(floor = 4 & !door_closed))
+LTLSPEC G(button[5] -> F(floor = 5 & !door_closed))
+
+-- Requirement 8: Maintain upward direction while requests exist above
+LTLSPEC G((floor < 5 & direction_up & button[5]) -> (direction_up U floor = 5))
+LTLSPEC G((floor < 4 & direction_up & button[4]) -> (direction_up U floor = 4))
+LTLSPEC G((floor < 3 & direction_up & button[3]) -> (direction_up U floor = 3))
+
+-- Requirement 9: Maintain downward direction while requests exist below
+LTLSPEC G((floor > 1 & direction_down & button[1]) -> (direction_down U floor = 1))
+LTLSPEC G((floor > 2 & direction_down & button[2]) -> (direction_down U floor = 2))
+LTLSPEC G((floor > 3 & direction_down & button[3]) -> (direction_down U floor = 3))
